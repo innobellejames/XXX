@@ -1,4 +1,4 @@
-/* The James NZ — GitHub browser-upload edition, 2 October 2026. */
+/* The James NZ — GitHub browser-upload edition, 2 October 2026. Backend-resilient patch. */
 const __jamesEmbedded = window.THE_JAMES_MEDIA || {};
 const __jamesAssetCache = Object.create(null);
 function __jamesAsset(path) {
@@ -29026,20 +29026,39 @@ function validWeather(w) {
 	const x = w;
 	return !!x && x.date === nzDate() && typeof x.place === "string" && Number.isFinite(x.current?.temperature_2m) && (x.current?.apparent_temperature === null || Number.isFinite(x.current?.apparent_temperature)) && Number.isFinite(x.current?.wind_speed_10m) && Number.isFinite(x.current?.precipitation) && Number.isFinite(x.daily?.high) && Number.isFinite(x.daily?.low);
 }
-async function loadWeather(name, signal) {
-	const r = await fetch("/api/weather?location=" + encodeURIComponent(name), {
-		signal: AbortSignal.any([signal, AbortSignal.timeout(2e4)]),
-		headers: { Accept: "application/json" }
-	});
-	let data;
-	try {
-		data = await r.json();
-	} catch {
-		throw new WeatherError("The weather connection was interrupted. Please refresh the page and try again.");
-	}
-	if (!r.ok) throw new WeatherError(data.error || "Weather is temporarily unavailable.", r.status);
+const weatherCoordinates = {
+	Auckland: [-36.8509, 174.7645], Whangārei: [-35.7251, 174.3237], Kerikeri: [-35.2268, 173.9474],
+	Hamilton: [-37.7870, 175.2793], Tauranga: [-37.6878, 176.1651], Rotorua: [-38.1368, 176.2497],
+	Taupō: [-38.6857, 176.0702], Gisborne: [-38.6623, 178.0176], Napier: [-39.4928, 176.9120],
+	Hastings: [-39.6381, 176.8490], "New Plymouth": [-39.0573, 174.0748], Whanganui: [-39.9301, 175.0479],
+	"Palmerston North": [-40.3523, 175.6082], Wellington: [-41.2866, 174.7756], Nelson: [-41.2706, 173.2837],
+	Blenheim: [-41.5134, 173.9612], Westport: [-41.7526, 171.6037], Greymouth: [-42.4500, 171.2100],
+	Christchurch: [-43.5321, 172.6362], Timaru: [-44.3960, 171.2540], Dunedin: [-45.8788, 170.5028],
+	Queenstown: [-45.0312, 168.6626], Wanaka: [-44.6974, 169.1320], Invercargill: [-46.4132, 168.3538]
+};
+async function loadWeatherDirect(name, signal) {
+	const coords = weatherCoordinates[name] || weatherCoordinates.Auckland;
+	const url = "https://api.open-meteo.com/v1/forecast?latitude=" + coords[0] + "&longitude=" + coords[1] + "&current=temperature_2m,apparent_temperature,wind_speed_10m,precipitation&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=1&timezone=Pacific%2FAuckland";
+	const r = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(2e4)]), headers: { Accept: "application/json" } });
+	let x;
+	try { x = await r.json(); } catch { throw new WeatherError("The weather connection was interrupted. Please refresh the page and try again."); }
+	if (!r.ok || !x?.current || !x?.daily) throw new WeatherError("Weather is temporarily unavailable. Please retry.", r.status || 503);
+	const data = { date: nzDate(), place: name, current: { temperature_2m: x.current.temperature_2m, apparent_temperature: x.current.apparent_temperature ?? null, wind_speed_10m: x.current.wind_speed_10m, precipitation: x.current.precipitation ?? 0 }, daily: { high: x.daily.temperature_2m_max?.[0], low: x.daily.temperature_2m_min?.[0], rain: x.daily.precipitation_probability_max?.[0] ?? 0, rainExpected: (x.daily.precipitation_probability_max?.[0] ?? 0) >= 45 } };
 	if (!validWeather(data)) throw new WeatherError("The forecast is incomplete or out of date. Please retry.");
 	return data;
+}
+async function loadWeather(name, signal) {
+	try {
+		const r = await fetch("/api/weather?location=" + encodeURIComponent(name), { signal: AbortSignal.any([signal, AbortSignal.timeout(2e4)]), headers: { Accept: "application/json" } });
+		let data;
+		try { data = await r.json(); } catch { data = null; }
+		if (r.ok && validWeather(data)) return data;
+		// GitHub/static copies may not have the optional /api/weather route.
+		return await loadWeatherDirect(name, signal);
+	} catch (e) {
+		if (e.name === "AbortError") throw e;
+		return await loadWeatherDirect(name, signal);
+	}
 }
 //#endregion
 //#region app/family-outfit.tsx
@@ -43044,19 +43063,27 @@ function Home({ canEdit }) {
 	}
 	const [tab, setTab] = (0, import_react.useState)("Home"), [filter, setFilter] = (0, import_react.useState)("All quotes"), [quotes, setQuotes] = (0, import_react.useState)([]), [business, setBusiness] = (0, import_react.useState)(null), [loading, setLoading] = (0, import_react.useState)(true), [error, setError] = (0, import_react.useState)(""), [modal, setModal] = (0, import_react.useState)(null), [saving, setSaving] = (0, import_react.useState)(false), [saved, setSaved] = (0, import_react.useState)("");
 	const [text, setText] = (0, import_react.useState)(""), [author, setAuthor] = (0, import_react.useState)(""), [category, setCategory] = (0, import_react.useState)(categories[0]), [bulk, setBulk] = (0, import_react.useState)(false), [draft, setDraft] = (0, import_react.useState)(emptyBusiness), [formError, setFormError] = (0, import_react.useState)("");
+	const localContentKey = "james-content-local-v1";
+	function readLocalContent() {
+		try { const d = JSON.parse(localStorage.getItem(localContentKey) || "{}"); return { quotes: Array.isArray(d.quotes) ? d.quotes : [], business: d.business || null }; } catch { return { quotes: [], business: null }; }
+	}
+	function writeLocalContent(d) {
+		try { localStorage.setItem(localContentKey, JSON.stringify(d)); } catch {}
+	}
 	async function load() {
 		setLoading(true);
 		setError("");
 		try {
-			const d = await readJsonResponse(await fetch("/api/content"), "Saved quotes and adverts are unavailable right now. The built-in collection is still here.");
-			if (!Array.isArray(d.quotes)) throw new Error("Saved content could not load. Please try again.");
-			setQuotes(d.quotes);
-			setBusiness(d.business || null);
-		} catch (e) {
-			setError(e.message);
-		} finally {
-			setLoading(false);
-		}
+			try {
+				const d = await readJsonResponse(await fetch("/api/content"), "");
+				if (!Array.isArray(d.quotes)) throw new Error("invalid");
+				setQuotes(d.quotes); setBusiness(d.business || null);
+				writeLocalContent({ quotes: d.quotes, business: d.business || null });
+			} catch {
+				const d = readLocalContent();
+				setQuotes(d.quotes); setBusiness(d.business);
+			}
+		} catch (e) { setError(e.message); } finally { setLoading(false); }
 	}
 	(0, import_react.useEffect)(() => {
 		load();
@@ -43117,11 +43144,15 @@ function Home({ canEdit }) {
 		return () => window.removeEventListener("keydown", fn);
 	}, [modal, saving]);
 	async function write(body) {
-		await readJsonResponse(await fetch("/api/content", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(body)
-		}), "Changes could not be saved. Please check that the website backend is connected.");
+		try {
+			await readJsonResponse(await fetch("/api/content", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }), "");
+			return;
+		} catch {}
+		const d = readLocalContent();
+		if (body.kind === "quotes") d.quotes = [...d.quotes, ...body.items.map((item, i) => ({ id: "local-" + Date.now() + "-" + i, ...item }))];
+		else if (body.kind === "business") d.business = { ...body };
+		else if (body.kind === "delete") d.quotes = d.quotes.filter((q) => q.id !== body.id);
+		writeLocalContent(d);
 	}
 	async function save(e) {
 		e.preventDefault();

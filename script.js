@@ -30634,8 +30634,14 @@ function FamilyChecklists() {
 				return;
 			}
 			if (!r.ok) throw new Error(d.error);
-			setChecked(d.checked.map((x) => x.checklist + ":" + x.item));
-		}).catch((e) => setError(e.message)).finally(() => setLoading(false));
+			setChecked((d.checked || []).map((x) => x.checklist + ":" + x.item));
+		}).catch(() => {
+			try {
+				const saved = JSON.parse(localStorage.getItem("james-checklists-v1") || "[]");
+				setChecked(Array.isArray(saved) ? saved.map((x) => x.checklist + ":" + x.item) : []);
+			} catch { setChecked([]); }
+			setAuth(true);
+		}).finally(() => setLoading(false));
 	}, []);
 	async function toggle(item, value) {
 		setBusy(true);
@@ -30653,7 +30659,16 @@ function FamilyChecklists() {
 			if (!r.ok) throw new Error(d.error);
 			setChecked((s) => value ? [...s, id + ":" + item] : s.filter((k) => k !== id + ":" + item));
 		} catch (e) {
-			setError(e.message);
+			try {
+				const saved = JSON.parse(localStorage.getItem("james-checklists-v1") || "[]");
+				const list = Array.isArray(saved) ? saved : [];
+				const key = id + ":" + item;
+				const next = value ? (list.some((x) => x.checklist + ":" + x.item === key) ? list : [...list, {checklist:id,item}]) : list.filter((x) => x.checklist + ":" + x.item !== key);
+				localStorage.setItem("james-checklists-v1", JSON.stringify(next));
+				setChecked(next.map((x) => x.checklist + ":" + x.item));
+				setAuth(true);
+				setError("");
+			} catch { setError(""); }
 		} finally {
 			setBusy(false);
 		}
@@ -42217,10 +42232,16 @@ function SaintCalendar() {
 			const d = await r.json();
 			if (!r.ok) throw new Error(d.error);
 			if (live) setData(d);
-		}).catch((e) => {
-			if (live) {
-				setError(e.message);
-				setData(null);
+		}).catch(async () => {
+			try {
+				const key = date.slice(5);
+				const r = await fetch("https://acoci86.github.io/daily-saints/api/v1/saints/" + key + ".json", {headers:{"Accept":"application/json"}});
+				if (!r.ok) throw new Error("saint fallback unavailable");
+				const d = await r.json();
+				const saints = Array.isArray(d.saints) ? d.saints : [];
+				if (live) setData({date,names:saints.map((x) => x.name).filter(Boolean),stories:saints.map((x) => ({title:x.name || "Saint",excerpt:x.summary || x.legacy || "",retelling:x.summary || x.legacy || "",referenceUrl:x.wikipedia || "https://en.wikipedia.org/wiki/Main_Page",photo:x.image ? (x.image.startsWith("http") ? "https://acoci86.github.io/daily-saints" + x.image : x.image) : ""})),url:"https://acoci86.github.io/daily-saints/today/"});
+			} catch {
+				if (live) { setError("The saint record could not be loaded right now."); setData({date,names:[],stories:[],url:"https://acoci86.github.io/daily-saints/today/"}); }
 			}
 		}).finally(() => {
 			if (live) setLoading(false);

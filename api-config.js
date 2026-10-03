@@ -17,6 +17,45 @@ window.THE_JAMES_API_BASE = "";
   const method = init?.method || (input instanceof Request ? input.method : "GET");
   if (method === "GET" && path === "/api/content") return json({quotes:[],business:null});
   if (method === "GET" && path === "/api/friend") return json({enabled:false});
+  if (method === "GET" && path === "/api/checklists") {
+   let checked = [];
+   try { checked = JSON.parse(localStorage.getItem("james-checklists-v1") || "[]"); } catch {}
+   return json({checked: Array.isArray(checked) ? checked : []});
+  }
+  if (method === "POST" && path === "/api/checklists") {
+   let checked = [];
+   try { checked = JSON.parse(localStorage.getItem("james-checklists-v1") || "[]"); } catch {}
+   checked = Array.isArray(checked) ? checked : [];
+   try {
+    const body = typeof init?.body === "string" ? JSON.parse(init.body) : {};
+    const key = String(body.checklist || "") + ":" + String(body.item ?? "");
+    if (body.checked) { if (!checked.some(x => String(x.checklist) + ":" + String(x.item) === key)) checked.push({checklist:body.checklist,item:body.item}); }
+    else checked = checked.filter(x => String(x.checklist) + ":" + String(x.item) !== key);
+    localStorage.setItem("james-checklists-v1", JSON.stringify(checked));
+   } catch {}
+   return json({checked});
+  }
+  if (method === "GET" && path === "/api/saint") {
+   const requested = url.searchParams.get("date") || "";
+   const m = requested.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+   if (m) {
+    const key = m[2] + "-" + m[3];
+    try {
+     const r = await originalFetch("https://acoci86.github.io/daily-saints/api/v1/saints/" + key + ".json", {headers:{"Accept":"application/json"}});
+     if (r.ok) {
+      const day = await r.json();
+      const saints = Array.isArray(day.saints) ? day.saints : [];
+      return json({
+       date: requested,
+       names: saints.map(s => s.name).filter(Boolean),
+       stories: saints.map(s => ({title:s.name || "Saint", excerpt:s.summary || s.legacy || "", retelling:s.summary || s.legacy || "", referenceUrl:s.wikipedia || "https://en.wikipedia.org/wiki/Main_Page", photo:s.image ? (s.image.startsWith("http") ? "https://acoci86.github.io/daily-saints" + s.image : s.image) : ""})),
+       url: "https://acoci86.github.io/daily-saints/today/"
+      });
+     }
+    } catch {}
+   }
+   return json({date:requested,names:[],stories:[],url:"https://acoci86.github.io/daily-saints/today/"});
+  }
   if (method === "GET" && path === "/api/bible") {
    bible ||= Promise.resolve(embeddedBible);
    const data = await bible, p=url.searchParams, book=p.get("book")||"", chapter=p.get("chapter"), terms=(p.get("q")||"").trim().toLowerCase().split(/\s+/).filter(Boolean),page=Math.max(0,Math.min(1000,Number(p.get("page"))||0));

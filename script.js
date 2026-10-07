@@ -1,4 +1,4 @@
-/* The James NZ — GitHub browser-upload edition, 2 October 2026. Backend-resilient patch. */
+/* The James NZ — GitHub browser-upload edition, 2 October 2026. */
 const __jamesEmbedded = window.THE_JAMES_MEDIA || {};
 const __jamesAssetCache = Object.create(null);
 function __jamesAsset(path) {
@@ -26853,7 +26853,7 @@ function CoffeeQuoteCard({ quote, index }) {
 		className: "coffee-post-card",
 		children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PhotoCard, {
 			text: "“" + quote + "”",
-			credit: "The James NZ · original coffee quote",
+			credit: "",
 			background: coffeeBackground(index),
 			filename: "TheJamesNZ-coffee-quote-" + String(index + 1).padStart(2, "0"),
 			kind: "coffee"
@@ -29026,39 +29026,20 @@ function validWeather(w) {
 	const x = w;
 	return !!x && x.date === nzDate() && typeof x.place === "string" && Number.isFinite(x.current?.temperature_2m) && (x.current?.apparent_temperature === null || Number.isFinite(x.current?.apparent_temperature)) && Number.isFinite(x.current?.wind_speed_10m) && Number.isFinite(x.current?.precipitation) && Number.isFinite(x.daily?.high) && Number.isFinite(x.daily?.low);
 }
-const weatherCoordinates = {
-	Auckland: [-36.8509, 174.7645], Whangārei: [-35.7251, 174.3237], Kerikeri: [-35.2268, 173.9474],
-	Hamilton: [-37.7870, 175.2793], Tauranga: [-37.6878, 176.1651], Rotorua: [-38.1368, 176.2497],
-	Taupō: [-38.6857, 176.0702], Gisborne: [-38.6623, 178.0176], Napier: [-39.4928, 176.9120],
-	Hastings: [-39.6381, 176.8490], "New Plymouth": [-39.0573, 174.0748], Whanganui: [-39.9301, 175.0479],
-	"Palmerston North": [-40.3523, 175.6082], Wellington: [-41.2866, 174.7756], Nelson: [-41.2706, 173.2837],
-	Blenheim: [-41.5134, 173.9612], Westport: [-41.7526, 171.6037], Greymouth: [-42.4500, 171.2100],
-	Christchurch: [-43.5321, 172.6362], Timaru: [-44.3960, 171.2540], Dunedin: [-45.8788, 170.5028],
-	Queenstown: [-45.0312, 168.6626], Wanaka: [-44.6974, 169.1320], Invercargill: [-46.4132, 168.3538]
-};
-async function loadWeatherDirect(name, signal) {
-	const coords = weatherCoordinates[name] || weatherCoordinates.Auckland;
-	const url = "https://api.open-meteo.com/v1/forecast?latitude=" + coords[0] + "&longitude=" + coords[1] + "&current=temperature_2m,apparent_temperature,wind_speed_10m,precipitation&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=1&timezone=Pacific%2FAuckland";
-	const r = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(2e4)]), headers: { Accept: "application/json" } });
-	let x;
-	try { x = await r.json(); } catch { throw new WeatherError("The weather connection was interrupted. Please refresh the page and try again."); }
-	if (!r.ok || !x?.current || !x?.daily) throw new WeatherError("Weather is temporarily unavailable. Please retry.", r.status || 503);
-	const data = { date: nzDate(), place: name, current: { temperature_2m: x.current.temperature_2m, apparent_temperature: x.current.apparent_temperature ?? null, wind_speed_10m: x.current.wind_speed_10m, precipitation: x.current.precipitation ?? 0 }, daily: { high: x.daily.temperature_2m_max?.[0], low: x.daily.temperature_2m_min?.[0], rain: x.daily.precipitation_probability_max?.[0] ?? 0, rainExpected: (x.daily.precipitation_probability_max?.[0] ?? 0) >= 45 } };
+async function loadWeather(name, signal) {
+	const r = await fetch("/api/weather?location=" + encodeURIComponent(name), {
+		signal: AbortSignal.any([signal, AbortSignal.timeout(2e4)]),
+		headers: { Accept: "application/json" }
+	});
+	let data;
+	try {
+		data = await r.json();
+	} catch {
+		throw new WeatherError("The weather connection was interrupted. Please refresh the page and try again.");
+	}
+	if (!r.ok) throw new WeatherError(data.error || "Weather is temporarily unavailable.", r.status);
 	if (!validWeather(data)) throw new WeatherError("The forecast is incomplete or out of date. Please retry.");
 	return data;
-}
-async function loadWeather(name, signal) {
-	try {
-		const r = await fetch("/api/weather?location=" + encodeURIComponent(name), { signal: AbortSignal.any([signal, AbortSignal.timeout(2e4)]), headers: { Accept: "application/json" } });
-		let data;
-		try { data = await r.json(); } catch { data = null; }
-		if (r.ok && validWeather(data)) return data;
-		// GitHub/static copies may not have the optional /api/weather route.
-		return await loadWeatherDirect(name, signal);
-	} catch (e) {
-		if (e.name === "AbortError") throw e;
-		return await loadWeatherDirect(name, signal);
-	}
 }
 //#endregion
 //#region app/family-outfit.tsx
@@ -30634,14 +30615,8 @@ function FamilyChecklists() {
 				return;
 			}
 			if (!r.ok) throw new Error(d.error);
-			setChecked((d.checked || []).map((x) => x.checklist + ":" + x.item));
-		}).catch(() => {
-			try {
-				const saved = JSON.parse(localStorage.getItem("james-checklists-v1") || "[]");
-				setChecked(Array.isArray(saved) ? saved.map((x) => x.checklist + ":" + x.item) : []);
-			} catch { setChecked([]); }
-			setAuth(true);
-		}).finally(() => setLoading(false));
+			setChecked(d.checked.map((x) => x.checklist + ":" + x.item));
+		}).catch((e) => setError(e.message)).finally(() => setLoading(false));
 	}, []);
 	async function toggle(item, value) {
 		setBusy(true);
@@ -30659,16 +30634,7 @@ function FamilyChecklists() {
 			if (!r.ok) throw new Error(d.error);
 			setChecked((s) => value ? [...s, id + ":" + item] : s.filter((k) => k !== id + ":" + item));
 		} catch (e) {
-			try {
-				const saved = JSON.parse(localStorage.getItem("james-checklists-v1") || "[]");
-				const list = Array.isArray(saved) ? saved : [];
-				const key = id + ":" + item;
-				const next = value ? (list.some((x) => x.checklist + ":" + x.item === key) ? list : [...list, {checklist:id,item}]) : list.filter((x) => x.checklist + ":" + x.item !== key);
-				localStorage.setItem("james-checklists-v1", JSON.stringify(next));
-				setChecked(next.map((x) => x.checklist + ":" + x.item));
-				setAuth(true);
-				setError("");
-			} catch { setError(""); }
+			setError(e.message);
 		} finally {
 			setBusy(false);
 		}
@@ -31251,7 +31217,7 @@ function mateoLocalReply(text, mode, index = 0, now = /* @__PURE__ */ new Date()
 	}
 	if (/\bcoffee\b/.test(normalized) && /quote|inspir|encourag/.test(normalized)) return {
 		kind: "quote",
-		content: "Here is a warm thought for your coffee break.\n\n“" + coffeeQuotes[index % coffeeQuotes.length] + "”\n\nThe James NZ · original coffee quote"
+		content: "Here is a warm thought for your coffee break.\n\n“" + coffeeQuotes[index % coffeeQuotes.length] + "”\n\n"
 	};
 	if (/what(?:’s|'s| is)? (?:the )?time|what time is it/.test(normalized)) return {
 		kind: "chat",
@@ -42232,16 +42198,10 @@ function SaintCalendar() {
 			const d = await r.json();
 			if (!r.ok) throw new Error(d.error);
 			if (live) setData(d);
-		}).catch(async () => {
-			try {
-				const key = date.slice(5);
-				const r = await fetch("https://acoci86.github.io/daily-saints/api/v1/saints/" + key + ".json", {headers:{"Accept":"application/json"}});
-				if (!r.ok) throw new Error("saint fallback unavailable");
-				const d = await r.json();
-				const saints = Array.isArray(d.saints) ? d.saints : [];
-				if (live) setData({date,names:saints.map((x) => x.name).filter(Boolean),stories:saints.map((x) => ({title:x.name || "Saint",excerpt:x.summary || x.legacy || "",retelling:x.summary || x.legacy || "",referenceUrl:x.wikipedia || "https://en.wikipedia.org/wiki/Main_Page",photo:x.image ? (x.image.startsWith("http") ? "https://acoci86.github.io/daily-saints" + x.image : x.image) : ""})),url:"https://acoci86.github.io/daily-saints/today/"});
-			} catch {
-				if (live) { setError("The saint record could not be loaded right now."); setData({date,names:[],stories:[],url:"https://acoci86.github.io/daily-saints/today/"}); }
+		}).catch((e) => {
+			if (live) {
+				setError(e.message);
+				setData(null);
 			}
 		}).finally(() => {
 			if (live) setLoading(false);
@@ -43084,27 +43044,19 @@ function Home({ canEdit }) {
 	}
 	const [tab, setTab] = (0, import_react.useState)("Home"), [filter, setFilter] = (0, import_react.useState)("All quotes"), [quotes, setQuotes] = (0, import_react.useState)([]), [business, setBusiness] = (0, import_react.useState)(null), [loading, setLoading] = (0, import_react.useState)(true), [error, setError] = (0, import_react.useState)(""), [modal, setModal] = (0, import_react.useState)(null), [saving, setSaving] = (0, import_react.useState)(false), [saved, setSaved] = (0, import_react.useState)("");
 	const [text, setText] = (0, import_react.useState)(""), [author, setAuthor] = (0, import_react.useState)(""), [category, setCategory] = (0, import_react.useState)(categories[0]), [bulk, setBulk] = (0, import_react.useState)(false), [draft, setDraft] = (0, import_react.useState)(emptyBusiness), [formError, setFormError] = (0, import_react.useState)("");
-	const localContentKey = "james-content-local-v1";
-	function readLocalContent() {
-		try { const d = JSON.parse(localStorage.getItem(localContentKey) || "{}"); return { quotes: Array.isArray(d.quotes) ? d.quotes : [], business: d.business || null }; } catch { return { quotes: [], business: null }; }
-	}
-	function writeLocalContent(d) {
-		try { localStorage.setItem(localContentKey, JSON.stringify(d)); } catch {}
-	}
 	async function load() {
 		setLoading(true);
 		setError("");
 		try {
-			try {
-				const d = await readJsonResponse(await fetch("/api/content"), "");
-				if (!Array.isArray(d.quotes)) throw new Error("invalid");
-				setQuotes(d.quotes); setBusiness(d.business || null);
-				writeLocalContent({ quotes: d.quotes, business: d.business || null });
-			} catch {
-				const d = readLocalContent();
-				setQuotes(d.quotes); setBusiness(d.business);
-			}
-		} catch (e) { setError(e.message); } finally { setLoading(false); }
+			const d = await readJsonResponse(await fetch("/api/content"), "Saved quotes and adverts are unavailable right now. The built-in collection is still here.");
+			if (!Array.isArray(d.quotes)) throw new Error("Saved content could not load. Please try again.");
+			setQuotes(d.quotes);
+			setBusiness(d.business || null);
+		} catch (e) {
+			setError(e.message);
+		} finally {
+			setLoading(false);
+		}
 	}
 	(0, import_react.useEffect)(() => {
 		load();
@@ -43165,15 +43117,11 @@ function Home({ canEdit }) {
 		return () => window.removeEventListener("keydown", fn);
 	}, [modal, saving]);
 	async function write(body) {
-		try {
-			await readJsonResponse(await fetch("/api/content", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }), "");
-			return;
-		} catch {}
-		const d = readLocalContent();
-		if (body.kind === "quotes") d.quotes = [...d.quotes, ...body.items.map((item, i) => ({ id: "local-" + Date.now() + "-" + i, ...item }))];
-		else if (body.kind === "business") d.business = { ...body };
-		else if (body.kind === "delete") d.quotes = d.quotes.filter((q) => q.id !== body.id);
-		writeLocalContent(d);
+		await readJsonResponse(await fetch("/api/content", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body)
+		}), "Changes could not be saved. Please check that the website backend is connected.");
 	}
 	async function save(e) {
 		e.preventDefault();
@@ -43306,7 +43254,7 @@ function Home({ canEdit }) {
 									children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PhotoCard, {
 										text: "“The way we care for each other is the light we leave behind.”",
 										credit: "The James NZ · original reflection",
-										background: xQuotePhoto(q.category),
+										background: xQuotePhoto("Everyday inspiration"),
 										filename: "TheJamesNZ-a-moment-to-reflect"
 									})
 								}),
@@ -43542,7 +43490,7 @@ function Home({ canEdit }) {
 							}),
 							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("footer", {
 								className: "page-footer",
-								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Sun, { size: 16 }), "The James NZ"] }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "A little kindness goes a long way." })]
+								children: [jH(OctViews),/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Sun, { size: 16 }), "The James NZ"] }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "© The James NZ 2026. All rights reserved." })]
 							})
 						]
 					}, tab)
@@ -44226,6 +44174,157 @@ function KidsLearning(){const [topic,setTopic]=import_react.useState('Phonics'),
 
 function xQuotePhoto(category){return category==="Pregnancy"?xAsset("care-photos-0"):category==="Breastfeeding"?xAsset("care-photos-1"):category==="Family life"?xAsset("care-photos-2"):jAsset("./photo-share/inspiration.webp");}
 
+// October navigation and accessibility update.
+voiceStyles.mateo={pitch:0.65,label:'Playful, low dog-like narrator'};
+const octSpeechRate=speechRate;
+speechRate=function(profile,rate){return profile==='mateo'?Math.max(.5,rate*.86):octSpeechRate(profile,rate)};
+const octSelectVoice=selectSpeechVoice;
+selectSpeechVoice=function(voices,profile,preferred){if(profile==='mateo'&&!preferred){const male=voices.filter(v=>/^en/i.test(v.lang)&&/daniel|alex|david|george|fred|rishi|male/i.test(v.name));if(male.length)return male[0];}return octSelectVoice(voices,profile,preferred)};
+const octWeather=MetServiceWeather;
+MetServiceWeather=function({location,refresh}){const [open,setOpen]=import_react.useState(false);const slug=slugs[Object.keys(slugs).find(k=>k.toLowerCase()===location.toLowerCase())];return jH('section',{className:'oct-weather'},jH('div',{className:'section-row'},jH('div',null,jH('p',{className:'eyebrow'},'METSERVICE · '+location),jH('h2',null,'Plan your next few hours')),jH('button',{className:'secondary',onClick:()=>setOpen(v=>!v),'aria-expanded':open},open?'Hide three-day outlook':'Three-day outlook')),jH('p',null,'See temperature, rainfall and wind on the official hourly forecast.'),jH('a',{className:'primary',href:slug?'https://www.metservice.com/towns-cities/locations/'+slug:'https://www.metservice.com/',target:'_blank',rel:'noopener noreferrer'},'Open MetService hourly weather'),open&&jH(octWeather,{location,refresh}));};
+const octQuiz=StoryQuiz;
+StoryQuiz=function({index}){const questions=storyQuizzes[index], [answers,setAnswers]=import_react.useState({}),[checked,setChecked]=import_react.useState(false);const score=questions.reduce((n,q,i)=>n+(answers[i]===q.answer?1:0),0);const text='I read '+stories[index].title+' and scored '+score+' / '+questions.length+'. Every answer helps me learn!';return jH('section',{className:'story-quiz'},jH('h2',null,'A little discovery'),questions.map((q,i)=>jH('fieldset',{key:i},jH('legend',null,(i+1)+'. '+q.q),jH('div',{className:'answers'},q.options.map((v,k)=>jH('button',{key:k,disabled:checked,'aria-pressed':answers[i]===k,className:checked?(k===q.answer?'correct':answers[i]===k?'incorrect':''):answers[i]===k?'selected':'',onClick:()=>setAnswers(a=>({...a,[i]:k}))},v))),checked&&jH('p',null,q.why))),checked?jH('div',null,jH('p',{role:'status'},text),jH(PhotoShare,{label:'Share quiz result',post:{title:'My reading discovery',text,credit:'',background:stories[index].image,filename:'james-reading-quiz-result'}}),jH('button',{className:'secondary',onClick:()=>{setChecked(false);setAnswers({})}},'Try again')):jH('button',{className:'primary',disabled:Object.keys(answers).length!==questions.length,onClick:()=>setChecked(true)},'Check my answers'));};
+function OctViews(){const [count,setCount]=import_react.useState(null),[error,setError]=import_react.useState(false);async function load(){try{let token;try{token=sessionStorage.getItem('james-view-token');if(!token){token=crypto.randomUUID();sessionStorage.setItem('james-view-token',token)}}catch{token=crypto.randomUUID()}const r=await fetch('/api/views',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});const d=await r.json();if(!r.ok)throw Error();setCount(d.views);setError(false)}catch{setError(true)}}import_react.useEffect(()=>{load()},[]);return jH('span',null,count!==null?'Page visits: '+count.toLocaleString():error?jH('button',{onClick:load,className:'secondary'},'Reload visit count'):'Loading visit count…')}
+const octFeedback=Feedback;
+Feedback=function(props){const [name,setName]=import_react.useState(''),[message,setMessage]=import_react.useState(''),[busy,setBusy]=import_react.useState(false),[status,setStatus]=import_react.useState(''),[error,setError]=import_react.useState('');if(props.kind==='review')return jH(octFeedback,props);return jH('section',{className:'j-section'},xTitle('COMMUNITY · HELP US IMPROVE','Report an issue','Tell us the section, what you tried and what happened. Reports are private.'),jH('form',{className:'feedback-form',onSubmit:async e=>{e.preventDefault();setBusy(true);setError('');setStatus('');try{const r=await fetch('/api/feedback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'issue',name,message})});const d=await r.json();if(!r.ok||!d.saved)throw Error(d.error||'Your report could not be saved.');setMessage('');setStatus(d.emailed?'Thank you. Your report is saved privately and forwarded to the owner.':'Thank you. Your report is saved privately for the owner. Email delivery is pending.')}catch(e){setError(e.message||'Connection failed. Your message is still here.')}finally{setBusy(false)}}},xInput('Name (optional)',{value:name,maxLength:100,onChange:e=>setName(e.target.value)}),jH('label',null,'What happened?',jH('textarea',{value:message,onChange:e=>setMessage(e.target.value),required:true,minLength:5,maxLength:4000,rows:6})),jH('p',{className:'small-note'},'Avoid passwords, health details and other sensitive information.'),error&&jH('p',{role:'alert',className:'error'},error),status&&jH('p',{role:'status',className:'success'},status),jH('button',{className:'primary',disabled:busy},busy?'Saving report…':'Submit report')));};
+const octChurch=ChurchDirectory;
+ChurchDirectory=function(){const featured=churches_default.filter(c=>c.id.startsWith('featured-'));const [selected,setSelected]=import_react.useState(featured[0]);const positions={Auckland:[251,125],Hamilton:[267,156],'Palmerston North':[272,233],Wellington:[264,258],Christchurch:[188,320],Dunedin:[137,391]};return jH(import_react.Fragment,null,jH('section',{className:'oct-church-map'},jH('div',null,jH('h2',null,'Explore cathedral locations'),jH('p',null,'Choose a pin to see church details and the listed Mass timetable. Use the directory below for more parishes.'),jH('svg',{viewBox:'0 0 360 450',role:'group','aria-label':'New Zealand cathedral location map'},jH('rect',{width:360,height:450,fill:'#e8f3f7',rx:20}),jH('path',{d:'M243 67L259 105L278 135L302 160L288 192L282 222L270 253L252 270L242 251L257 228L246 204L257 177L240 150L247 119L232 83Z M240 266L221 291L206 319L182 341L164 370L149 401L120 421L106 410L122 380L150 348L173 321L194 299L215 276Z',fill:'#aac9a6',stroke:'#6c9378'}),featured.map(c=>{const [x,y]=positions[c.diocese]||[200,200];return jH('g',{key:c.id,role:'button',tabIndex:0,'aria-label':c.diocese+' cathedral',onClick:()=>setSelected(c),onKeyDown:e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();setSelected(c)}}},jH('circle',{cx:x,cy:y,r:selected.id===c.id?10:7,fill:selected.id===c.id?'#b35b32':'#174d40',stroke:'#fff',strokeWidth:3}),jH('text',{x:x+13,y:y+4,fontSize:11,fill:'#17352e'},c.diocese))})),jH('p',{className:'small-note'},'Schematic map: pins show city locations, not precise street coordinates.')),jH('article',{className:'j-card','aria-live':'polite'},jH('h2',null,selected.name),jH('p',null,selected.address),jH('h3',null,'Listed Mass times'),jH('p',null,selected.schedule),jH('p',{className:'small-note'},'Confirm times with the parish, especially on holy days.'),jH('a',{className:'primary',href:selected.source,target:'_blank',rel:'noopener noreferrer'},'Confirm official Mass times'),jH('a',{className:'secondary',href:selected.map,target:'_blank',rel:'noopener noreferrer'},'Open street map'))),jH(octChurch));};
+
+var octCountryGroups={
+english:['New Zealand','Australia','United Kingdom','United States','Canada','Ireland','Jamaica','Barbados','Bahamas','Belize','Guyana','Trinidad and Tobago','Antigua and Barbuda','Dominica','Grenada','Saint Lucia','Saint Kitts and Nevis','Saint Vincent and the Grenadines','South Africa','Nigeria','Ghana','Kenya','Uganda','Zambia','Zimbabwe','Botswana','Namibia','Malawi','Liberia','Sierra Leone','Gambia','Mauritius','Seychelles','Fiji','Papua New Guinea','Solomon Islands','Vanuatu','Kiribati','Tuvalu','Nauru','Palau','Marshall Islands','Micronesia'],
+french:['France','Belgium','Switzerland','Luxembourg','Monaco','Haiti','Senegal','Ivory Coast','Benin','Togo','Burkina Faso','Niger','Mali','Guinea','Cameroon','Gabon','Republic of the Congo','Democratic Republic of the Congo','Chad','Central African Republic','Djibouti','Madagascar','Comoros'],
+spanish:['Spain','Mexico','Guatemala','Honduras','El Salvador','Nicaragua','Costa Rica','Panama','Cuba','Dominican Republic','Colombia','Venezuela','Ecuador','Peru','Bolivia','Chile','Argentina','Uruguay','Paraguay','Equatorial Guinea'],
+arabic:['Saudi Arabia','United Arab Emirates','Qatar','Bahrain','Kuwait','Oman','Yemen','Jordan','Lebanon','Syria','Iraq','Egypt','Sudan','Libya','Tunisia','Algeria','Morocco','Mauritania'],
+portuguese:['Portugal','Brazil','Angola','Mozambique','Cape Verde','Guinea-Bissau','São Tomé and Príncipe','East Timor'],
+german:['Germany','Austria','Liechtenstein'],italian:['Italy','San Marino','Vatican City'],dutch:['Netherlands','Suriname'],russian:['Russia','Belarus'],hindi:['India'],tagalog:['Philippines'],japanese:['Japan'],korean:['South Korea'],mandarin:['China','Singapore'],samoan:['Samoa'],tongan:['Tonga'],thai:['Thailand'],vietnamese:['Vietnam'],indonesian:['Indonesia'],malay:['Malaysia','Brunei'],turkish:['Turkey'],greek:['Greece','Cyprus'],swahili:['Tanzania'],nepali:['Nepal'],bengali:['Bangladesh'],urdu:['Pakistan'],sinhala:['Sri Lanka'],khmer:['Cambodia'],lao:['Laos'],mongolian:['Mongolia'],kazakh:['Kazakhstan'],uzbek:['Uzbekistan'],georgian:['Georgia'],armenian:['Armenia'],azerbaijani:['Azerbaijan'],hebrew:['Israel'],persian:['Iran'],pashto:['Afghanistan'],icelandic:['Iceland'],norwegian:['Norway'],swedish:['Sweden'],finnish:['Finland'],danish:['Denmark'],polish:['Poland'],czech:['Czechia'],slovak:['Slovakia'],hungarian:['Hungary'],romanian:['Romania'],bulgarian:['Bulgaria'],croatian:['Croatia'],serbian:['Serbia'],albanian:['Albania'],estonian:['Estonia'],latvian:['Latvia'],lithuanian:['Lithuania'],ukrainian:['Ukraine'],amharic:['Ethiopia'],kinyarwanda:['Rwanda'],kirundi:['Burundi'],somali:['Somalia'],malagasy:['Madagascar']};
+var octGreetings={english:'Hello',portuguese:'Olá',german:'Guten Tag',italian:'Buongiorno',dutch:'Hallo',russian:'Здравствуйте',arabic:'السلام عليكم',hindi:'नमस्ते',mandarin:'你好',korean:'안녕하세요',thai:'สวัสดี',vietnamese:'Xin chào',indonesian:'Selamat pagi',malay:'Selamat pagi',turkish:'Merhaba',greek:'Γεια σας',swahili:'Habari',nepali:'नमस्ते',bengali:'নমস্কার',urdu:'السلام علیکم',sinhala:'ආයුබෝවන්',khmer:'ជម្រាបសួរ',lao:'ສະບາຍດີ',mongolian:'Сайн байна уу',kazakh:'Сәлеметсіз бе',uzbek:'Assalomu alaykum',georgian:'გამარჯობა',armenian:'Բարև ձեզ',azerbaijani:'Salam',hebrew:'שלום',persian:'سلام',pashto:'سلام',icelandic:'Góðan daginn',norwegian:'Hei',swedish:'Hej',finnish:'Hei',danish:'Hej',polish:'Dzień dobry',czech:'Dobrý den',slovak:'Dobrý deň',hungarian:'Jó napot',romanian:'Bună ziua',bulgarian:'Здравейте',croatian:'Dobar dan',serbian:'Добар дан',albanian:'Përshëndetje',estonian:'Tere',latvian:'Labdien',lithuanian:'Laba diena',ukrainian:'Добрий день',amharic:'ሰላም',kinyarwanda:'Muraho',kirundi:'Amahoro',somali:'Salaam',malagasy:'Manao ahoana'};
+var octCountries=Object.entries(octCountryGroups).flatMap(([slug,names])=>names.map(name=>({name,slug}))).filter((c,i,a)=>a.findIndex(x=>x.name===c.name)===i).sort((a,b)=>a.name.localeCompare(b.name));
+LanguageLearning=function(){const [country,setCountry]=import_react.useState('New Zealand'),[query,setQuery]=import_react.useState(''),[topic,setTopic]=import_react.useState('Greetings'),[languageChoice,setLanguageChoice]=import_react.useState('');const c=octCountries.find(c=>c.name===country),slug=languageChoice||(country==='New Zealand'?'maori':c.slug),l=languages.find(l=>l.slug===slug),culture=xCultureData.find(x=>x.slug===slug);const rows=l?(topic==='Counting'?l.numbers.map((n,i)=>[String(i+1),n]):topic==='Useful phrases'?l.phrases:l.greetings):[['Hello / respectful greeting',octGreetings[slug]||'Hello']];const results=octCountries.filter(c=>c.name.toLowerCase().includes(query.toLowerCase()));return jH('section',{className:'j-section'},xTitle('FAMILY & LEARNING · A WORLD OF WELCOME','Explore countries & greetings',octCountries.length+' countries. Choose a country card, then explore a language example. Countries often have many languages and traditions.'),xInput('Find a country',{type:'search',value:query,onChange:e=>setQuery(e.target.value),placeholder:'Search a country…'}),jH('div',{className:'oct-country-grid','aria-label':'Countries'},results.map(c=>jH('button',{key:c.name,className:country===c.name?'selected':'','aria-pressed':country===c.name,onClick:()=>{setCountry(c.name);setLanguageChoice('');setTopic('Greetings')}},c.name))),!results.length&&jH('p',{role:'status'},'No countries match your search.'),jH('article',{className:'language-panel'},jH('h2',null,country),jH('p',null,'Language example: '+(l?.name||slug.charAt(0).toUpperCase()+slug.slice(1))+'. This is one example, not a complete list of the country’s languages.'),country==='New Zealand'&&jH('div',{className:'filters'},jH('button',{onClick:()=>setLanguageChoice('maori')},'Te reo Māori'),jH('button',{onClick:()=>setLanguageChoice('english')},'English')),l&&jH('div',{className:'filters'},['Greetings','Useful phrases','Counting'].map(t=>jH('button',{key:t,className:topic===t?'selected':'',onClick:()=>setTopic(t)},t))),jH('div',{className:'language-rows'},rows.map(([a,b])=>jH('div',{key:a},jH('span',null,a),jH('strong',{dir:'auto'},b)))),l&&jH('p',null,l.note),jH('h3',null,'A respectful first meeting'),jH('p',null,culture?.respect||'Begin with a polite greeting, listen to the elder and ask how they prefer to be addressed. Follow your host’s guidance about titles and physical greetings. Preferences vary between people and communities.'),culture&&jH(CultureCard,{language:l||{slug}}),jH('a',{href:'https://www.omniglot.com/language/phrases/'+slug+'.php',target:'_blank',rel:'noopener noreferrer'},'Explore language phrases'),jH('a',{href:'https://www.sbs.com.au/learn/the-cultural-atlas/',target:'_blank',rel:'noopener noreferrer'},'Explore cultural guidance')));};
+
+// Photo cards and share controls for family care. Insert before createRoot.
+var jChecklistPhotoMap = {
+  'first-mum': ['care-photos-0', 'An expectant mother preparing for her baby'],
+  'first-dad': ['care-photos-2', 'Parents spending time together with their children'],
+  'hospital': ['care-photos-0', 'An expectant mother at home'],
+  'bachelor': ['life-photos-0', 'A welcoming table prepared for a celebration'],
+  'bachelorette': ['life-photos-0', 'A welcoming table prepared for a celebration'],
+  'anniversary': ['care-photos-2', 'A family sharing a quiet moment at home'],
+  'kids-party': ['life-photos-0', 'A decorated celebration table'],
+  'house-blessing': ['life-photos-1', 'A welcoming new home with belongings ready to unpack'],
+  'baby-shower': ['life-photos-0', 'A baby shower table with flowers and gifts'],
+  'moving-home': ['life-photos-1', 'Moving boxes and essential belongings in a new home']
+};
+checklists.forEach(function(c) {
+  var entry=jChecklistPhotoMap[c.id]||['care-photos-2','A family together at home'];
+  c.photo=xAsset(entry[0]);c.photoAlt=entry[1];
+});
+var jFamilyTipPhotos={
+  'Recycling':['care-photos-3','Reusable cleaning cloths and household supplies'],
+  'Decluttering':['life-photos-1','Organised boxes and belongings in a home'],
+  'Training dogs':['care-photos-2','Mateo resting with the family under adult supervision'],
+  'Babyproofing home':['care-photos-2','Parents and children together at home'],
+  'Preparing baby bottles':['care-photos-1','A parent caring for a young baby'],
+  'Breastmilk pumps':['care-photos-1','A parent cuddling a young baby'],
+  'Baby food preparation':['care-photos-1','A parent caring for a young baby'],
+  'Kids’ hairstyle ideas':['care-photos-2','The girls with their family at home'],
+  'Potty training':['care-photos-2','Parents and children sharing a supportive family moment']
+};
+function jCarePhoto(src,alt){return jH('img',{src,alt,loading:'lazy',style:{width:'100%',height:180,objectFit:'cover',borderRadius:14,display:'block',marginBottom:16}});}
+FamilyTips=function FamilyTipsWithPhotos(){
+ const [category,setCategory]=import_react.useState(Object.keys(jTips)[0]),[search,setSearch]=import_react.useState('');
+ const [source,items]=jTips[category],photo=jFamilyTipPhotos[category]||['care-photos-2','A family together at home'],src=xAsset(photo[0]);
+ const shown=items.map((text,index)=>({text,index})).filter(t=>t.text.toLowerCase().includes(search.toLowerCase()));
+ return jH('section',{className:'j-section'},jH('p',{className:'eyebrow'},'FAMILY & LEARNING · LITTLE EVERYDAY HELPS'),jH('h1',null,'Practical family tips'),jH('p',null,'Find a small step for your family today. Each card can be saved or shared with the website QR code.'),jH('div',{className:'filters','aria-label':'Tip category'},Object.keys(jTips).map(c=>jH('button',{key:c,className:category===c?'selected':'','aria-pressed':category===c,onClick:()=>setCategory(c)},c))),jH('label',null,'Search this category',jH('input',{type:'search',value:search,onChange:e=>setSearch(e.target.value),placeholder:'Find a tip'})),jH('h2',null,category),source&&jH('a',{href:source,target:'_blank',rel:'noopener noreferrer'},'Read current NZ guidance'),jH('button',{className:'secondary',onClick:()=>jDownloadHTML('james-'+category.replace(/[^a-z0-9]+/gi,'-'),category,'<section><img class="illustration" src="'+jData(src)+'" alt="'+jEscape(photo[1])+'"><ul>'+items.map(t=>'<li>'+jEscape(t)+'</li>').join('')+'</ul>'+(source?'<p>Guidance: <a href="'+source+'">'+jEscape(source)+'</a></p>':'')+'</section>')},'Download all tips with QR'),jH('div',{className:'j-grid'},shown.map(({text,index})=>jH('article',{className:'j-card',key:text},jCarePhoto(src,photo[1]+' · illustrative family-care photo'),jH('p',{className:'eyebrow'},category+' · '+(index+1)),jH('p',null,text),jH(PhotoShare,{label:'Share or save this tip',post:{title:category,text,credit:source?'Guidance: '+new URL(source).hostname:'',background:src,filename:'james-tip-'+category.replace(/[^a-z0-9]+/gi,'-')+'-'+index}})))),!shown.length&&jH('p',{role:'status'},'Try another word to find a tip.'));
+};
+var jOriginalBreastfeedingPhotos=Breastfeeding;
+function jAddBreastfeedingCards(node){
+ if(Array.isArray(node))return node.map(jAddBreastfeedingCards);
+ if(!import_react.isValidElement(node))return node;
+ if(node.type==='div' && node.props.className==='feeding-tips'){
+  return import_react.cloneElement(node,{style:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,270px),1fr))',gap:20}},tips.map(([title,text],i)=>{
+   const src=xAsset(i===8?'care-photos-2':'care-photos-1');
+   return jH('article',{key:title,style:{padding:20,borderRadius:18,background:'#fff',border:'1px solid #e5e9e5'}},jCarePhoto(src,i===8?'A family sharing a supportive moment':'A mother cuddling her baby · illustrative care photo'),jH('span',{className:'tip-number'},String(i+1).padStart(2,'0')),jH('h2',null,title),jH('p',null,text),jH(PhotoShare,{label:'Share or save this tip',post:{title,text,credit:'General tip · ask your midwife or feeding specialist for personal advice',background:src,filename:'james-breastfeeding-tip-'+i}}));
+  }));
+ }
+ return import_react.cloneElement(node,{},jAddBreastfeedingCards(node.props.children));
+}
+Breastfeeding=function BreastfeedingPhotoCards(){return jAddBreastfeedingCards(jOriginalBreastfeedingPhotos());};
+
+/* October content additions. Insert inside the application bundle before createRoot. */
+var cBodyOptions = {
+ 'Arms & shoulders': [
+  ['Wall push-up','Stand facing a wall with hands at chest height. Bend your elbows slowly and press back. Keep your body aligned.','Counter push-up','Use a fixed kitchen counter indoors or a secure raised exercise rail outdoors. Bend and straighten your elbows with control.','Floor push-up','On a mat, choose knees-down or full push-ups. Keep your trunk steady and stop before your form changes.'],
+  ['Seated arm raise','Sit tall and raise your empty hands only through a comfortable range, then lower.','Light arm raise','Stand steadily and raise light hand weights to a comfortable height without shrugging.','Slow arm raise','Use a suitable light resistance and lower slowly. Avoid swinging or holding your breath.']
+ ],
+ 'Legs & hips': [
+  ['Supported sit-to-stand','Use a stable chair against a wall indoors or a fixed park bench outdoors. Stand and sit slowly, using your hands if helpful.','Chair squat','Stand just in front of a stable seat, lower towards it, then stand. Keep knees tracking with your feet.','Controlled squat','Squat through a comfortable range without a seat, then stand. Lower slowly; avoid bouncing.'],
+  ['Supported heel raise','Hold a stable support, lift both heels and lower with control.','Standing heel raise','Lift both heels without support only if your balance is steady.','Single-leg heel raise','Hold a stable support, lift one heel and lower slowly. Change sides.']
+ ],
+ 'Abdomen & core': [
+  ['Standing brace','Gently tighten your trunk while breathing normally. Hold briefly, release and repeat.','Bird dog','On hands and knees on a mat, extend an opposite arm and leg without twisting. Change sides.','Plank option','On a mat, use knees or toes and forearms. Keep breathing and hold only while your back stays comfortable.'],
+  ['Seated knee lift','Sit on a stable seat and lift one knee a little without leaning back. Change sides.','Standing knee lift','Hold a support if needed and lift alternating knees slowly while keeping your trunk steady.','Slow mountain climber','From a comfortable plank position on a mat, bring one knee forwards slowly, then alternate. Keep your hips steady.']
+ ],
+ 'Back & posture': [
+  ['Shoulder blade squeeze','Sit or stand tall, gently draw shoulder blades together and release without shrugging.','Supported hip hinge','Hold a stable support and move your hips backwards while keeping your back comfortable, then stand.','Unweighted hip hinge','Repeat without support only with steady balance. Lower slowly, keeping the movement at your hips.'],
+  ['Small shoulder rolls','Make small comfortable circles, then relax your shoulders.','Wall posture reach','With your back comfortably near a wall, raise and lower your arms through a pain-free range.','Bird dog control','On a mat, extend an opposite arm and leg, pause briefly without twisting, and change sides.']
+ ]
+};
+BodyWorkouts = function(){
+ const [part,setPart]=import_react.useState('Arms & shoulders'),[level,setLevel]=import_react.useState('Easy'),[place,setPlace]=import_react.useState('Indoor');
+ const n=['Easy','Normal','Intense'].indexOf(level)*2, photo=workoutPhotos[(level==='Normal'?'Med':level)+'-'+(place==='Indoor'?'Home':'Outdoor')];
+ const dose=level==='Easy'?'Start with 1 set of 5 comfortable repetitions, or a brief comfortable hold.':level==='Normal'?'Try 1–2 sets of 8 repetitions, resting between sets. Shorten any hold as needed.':'Try 2–3 sets of 8–12 controlled repetitions only if this level is already comfortable. For holds, finish before your form changes.';
+ return jH('section',{className:'j-section body-area-workouts'},jH('h2',null,'Exercises by body area'),jH('p',null,'Choose an area, your effort level and where you want to move.'),
+ jH('div',{className:'filters','aria-label':'Body area'},Object.keys(cBodyOptions).map(p=>jH('button',{key:p,onClick:()=>setPart(p),'aria-pressed':part===p,className:part===p?'selected':''},p))),
+ jH('div',{className:'filters','aria-label':'Effort level'},['Easy','Normal','Intense'].map(p=>jH('button',{key:p,onClick:()=>setLevel(p),'aria-pressed':level===p,className:level===p?'selected':''},p))),
+ jH('div',{className:'filters','aria-label':'Exercise setting'},['Indoor','Outdoor'].map(p=>jH('button',{key:p,onClick:()=>setPlace(p),'aria-pressed':place===p,className:place===p?'selected':''},p))),
+ jH('p',{className:'small-note'},'Warm up gently. Breathe normally, rest between movements and stop if pain, dizziness or unusual breathlessness occurs. Pregnancy, recovery after birth and injuries may need tailored advice. Intense means a more challenging variation, not moving as fast as possible.'),
+ jH('div',{className:'j-grid'},cBodyOptions[part].map(row=>jH('article',{className:'j-card',key:row[n]},jH('img',{src:photo,alt:place+' exercise setting',loading:'lazy',style:{width:'100%',height:160,objectFit:'cover',borderRadius:12}}),jH('p',{className:'eyebrow'},level+' · '+place),jH('h3',null,row[n]),jH('p',null,row[n+1]),jH('p',null,dose),jH('p',{className:'small-note'},place==='Outdoor'?'Choose dry, level ground, a secure fixed support and a clean exercise mat where needed.':'Use a clear space, non-slip floor and stable support; use an exercise mat for floor movements.')))),
+ jH('a',{href:'https://www.nhs.uk/live-well/exercise/strength-exercises/',target:'_blank',rel:'noopener noreferrer'},'NHS strength guidance'),jH('span',null,' · '),jH('a',{href:'https://www.nhs.uk/live-well/exercise/strength-and-flex-exercise-plan-how-to-videos/',target:'_blank',rel:'noopener noreferrer'},'Watch NHS demonstrations'));
+};
+xSkills.Speaking.tips.push('Use a beginning, one useful example and a clear ending.','Describe a chart’s main finding before listing its numbers.','Prepare a one-minute version before creating a longer talk.','When a question is unclear, ask the person to explain it.','If you do not know an answer, say so and agree how to follow up.','Invite a trusted listener to tell you which part was easiest to remember.');
+xSkills.Leadership.tips.push('Agree how and when the team will check progress.','Invite quieter people to contribute without putting them on the spot.','Explain why a change matters and what support is available.','Separate a person’s worth from the behaviour you need to discuss.','Ask what obstacle you can remove before asking someone to work harder.','End a meeting by confirming the decision, owner and next check-in.');
+xSkills.Speaking.quiz.push({q:'A listener asks a question you cannot answer. What helps?',options:['Invent a confident answer','Say what you know and agree a follow-up','Ignore the question'],answer:1,why:'Honesty and a concrete follow-up protect trust.'},{q:'How can you make a longer talk clearer?',options:['Keep adding unrelated details','Remove every example','Prepare one main point and a simple structure'],answer:2,why:'A structure and a relevant example make the message easier to follow.'});
+xSkills.Leadership.quiz.push({q:'What is helpful before asking someone to work harder?',options:['Ask which obstacle you can help remove','Compare them publicly with a colleague','Avoid talking to them'],answer:0,why:'Support and a clear understanding of the obstacle can improve the work.'},{q:'How should a useful meeting end?',options:['With no next step','With a decision, owner and check-in','With another long discussion'],answer:1,why:'An agreed next step turns discussion into action.'});
+var cSkillsOriginal=SkillsPractice;
+var cSkillQuotes=['Speak clearly, listen kindly, and leave room for another voice.','Preparation gives your message somewhere steady to stand.','A thoughtful pause can give an important idea room to land.','Lead with a clear next step and an open ear.','Share the credit; carry your part of the responsibility.','Humility makes room for learning from someone else.','A useful leader helps others become more confident.','Be firm about the task and gentle with the person.'];
+SkillsPractice=function(){return jH(import_react.Fragment,null,jH(cSkillsOriginal),jH('section',{className:'j-section'},jH('h2',null,'A small practice toolkit'),jH('div',{className:'j-grid'},[
+ ['One-minute talk','Choose one point. Say why it matters, give one example and end with a useful next step. Record yourself and check clarity, pace and pauses.'],
+ ['Listening practice','Ask an open question. Let the person finish. Summarise what you heard and check that you understood before adding your view.'],
+ ['Kind feedback','Name a specific action, explain its effect, and suggest a next step. Ask for the other person’s view. Give appreciation just as specifically.'],
+ ['Meeting planner','Before: write the decision you need. During: hear relevant views. After: record the decision, person responsible and next check-in.'],
+ ['A difficult conversation','Describe what happened without labels, explain the effect, ask about their experience, then agree one practical change.'],
+ ['Personal reflection','After a talk or team activity, note one thing that helped, one thing to practise, and one person whose contribution you can thank.']
+ ].map(([title,text])=>jH('article',{className:'j-card',key:title},jH('h3',null,title),jH('p',null,text)))),jH('h2',null,'Words to share'),jH('p',{className:'small-note'},'Original reflection lines for speaking and leadership.'),jH('div',{className:'j-grid'},cSkillQuotes.map((text,i)=>jH('article',{className:'j-card',key:text},jH('blockquote',null,text),jH(PhotoShare,{label:'Share or download quote',post:{title:'Speaking & leadership',text,background:xAsset('life-photos-2'),credit:'Reflection · The James NZ',filename:'speaking-leadership-'+(i+1)+'.png'}}))))));};
+xRealStories.forEach(s=>{s.category=s.name==='Thomas Edison'?'Leadership':'Motivation';});
+xRealStories.push(
+ {name:'Saint Teresa of Calcutta',category:'Catholic faith',title:'Prayer becoming practical care',text:'Teresa founded the Missionaries of Charity to serve people living in severe poverty. The Vatican account connects her life of service with prayer and the desire to recognise Christ in those needing care.',lesson:'Reflection: choose one practical act of care, and make time to notice the person receiving it.',source:'https://www.vatican.va/news_services/liturgy/saints/ns_lit_doc_20031019_madre-teresa_en.html'},
+ {name:'Saint Josephine Bakhita',category:'Catholic faith',title:'Dignity after great suffering',text:'Bakhita was born in Sudan, endured enslavement, and later became a Canossian religious sister in Italy. The Vatican biography describes her gentle service and Christian faith. Her experience calls attention to the dignity of people affected by exploitation.',lesson:'Reflection: honour another person’s story without expecting them to recover on your timetable.',source:'https://www.vatican.va/news_services/liturgy/saints/ns_lit_doc_20001001_giuseppina-bakhita_en.html'},
+ {name:'Saint Thérèse of Lisieux',category:'Humility',title:'Love in an ordinary day',text:'Thérèse lived as a Carmelite in Lisieux and described a spiritual path of trust, simplicity and love. Her short life and writings became influential far beyond her convent.',lesson:'Reflection: do an ordinary task with attention and kindness, even when no one will notice.',source:'https://www.vatican.va/news_services/liturgy/saints/ns_lit_doc_19101997_stherese_en.html'},
+ {name:'Saint Francis of Assisi',category:'Humility',title:'A simpler way of serving',text:'Francis turned away from the wealth of his early life and embraced poverty and service. Vatican News describes his continuing influence on Christian fellowship, dialogue and care for creation.',lesson:'Reflection: consider one possession, habit or ambition you could simplify to make more room for care.',source:'https://www.vaticannews.va/en/saints/10/04/st--francis-of-assisi--founder-of-the-franciscan--order--patron-.html'}
+);
+RealLifeStories=function(){const [filter,setFilter]=import_react.useState('All'),[search,setSearch]=import_react.useState('');const rows=xRealStories.filter(s=>(filter==='All'||s.category===filter)&&(s.name+' '+s.title+' '+s.text).toLowerCase().includes(search.toLowerCase()));return jH('section',{className:'j-section'},xTitle('FAITH & INSPIRATION · REAL PEOPLE','Ideas from real lives','Documented experiences in motivation, leadership, Catholic faith and humility. Reflections below are our prompts, separate from the historical accounts.'),jH('div',{className:'filters'},['All','Motivation','Leadership','Catholic faith','Humility'].map(t=>jH('button',{key:t,'aria-pressed':filter===t,className:filter===t?'selected':'',onClick:()=>setFilter(t)},t))),jH('label',null,'Search stories',jH('input',{type:'search',value:search,onChange:e=>setSearch(e.target.value),placeholder:'Person or idea'})),jH('div',{className:'j-grid'},rows.map((s,i)=>jH('article',{className:'j-card',key:s.name},jH('p',{className:'eyebrow'},s.category),jH('h2',null,s.name),jH('h3',null,s.title),jH('p',null,s.text),jH('p',null,s.lesson),jH('a',{href:s.source,target:'_blank',rel:'noopener noreferrer'},'Read the primary source'),jH(PhotoShare,{label:'Share reflection',post:{title:s.name+' · a reflection',text:s.lesson.replace(/^Reflection: /,''),background:xAsset('life-photos-2'),credit:'Reflection inspired by a documented life; not a quotation',filename:'real-life-reflection-'+i+'.png'}})))),!rows.length&&jH('p',{role:'status'},'No stories match. Try a different name or topic.'));};
+var cCommonPrayers=[
+ {name:'Angel of God',text:'Angel of God, my guardian dear, to whom God’s love commits me here, ever this day be at my side, to light and guard, to rule and guide. Amen.',note:'Traditional guardian angel prayer.'},
+ {name:'3 o’clock habit · Hour of Mercy',text:'Jesus, for the sake of Your Sorrowful Passion, have mercy on us and on the whole world.',note:'At 3 pm, pause to remember Jesus’ Passion and pray for the world. This short Hour of Mercy prayer is distinct from the full Divine Mercy Chaplet.',source:'https://thedivinemercy.org/message/devotions/hour'},
+ {name:'Glory Be',text:'Glory be to the Father, and to the Son, and to the Holy Ghost. As it was in the beginning, is now, and ever shall be, world without end. Amen.',note:'Traditional doxology.'},
+ {name:'Grace before meals',text:'Bless us, O Lord, and these Thy gifts, which we are about to receive from Thy bounty, through Christ our Lord. Amen.',note:'Traditional Catholic grace.'},
+ {name:'Eternal Rest',text:'Eternal rest grant unto them, O Lord, and let perpetual light shine upon them. May they rest in peace. Amen.',note:'Traditional prayer for the departed.'},
+ {name:'The Sign of the Cross',text:'In the name of the Father, and of the Son, and of the Holy Ghost. Amen.',note:'Traditional opening and closing prayer.'}
+];
+var cOriginalDevotions=ExtraDevotions;
+ExtraDevotions=function(){const [chosen,setChosen]=import_react.useState(cCommonPrayers[0].name),speech=useSpeech('motherly','Slow'),p=cCommonPrayers.find(p=>p.name===chosen);return jH(import_react.Fragment,null,jH(cOriginalDevotions),jH('section',{className:'j-section common-prayers'},jH('h2',null,'Everyday prayers'),jH('p',null,'Choose a prayer for a quiet moment in your day.'),jH('div',{className:'filters'},cCommonPrayers.map(pr=>jH('button',{key:pr.name,className:chosen===pr.name?'selected':'','aria-pressed':chosen===pr.name,onClick:()=>{speech.stop();setChosen(pr.name);}},pr.name))),jH('article',{className:'j-card'},jH('h3',null,p.name),jH('p',{style:{whiteSpace:'pre-line',fontSize:'1.12rem',lineHeight:1.8}},p.text),jH('p',{className:'small-note'},p.note),p.source&&jH('a',{href:p.source,target:'_blank',rel:'noopener noreferrer'},'Hour of Mercy guidance'),jH('div',{className:'button-row'},jH('button',{onClick:()=>speech.read([p.text])},'Read prayer aloud'),jH('button',{className:'secondary',onClick:()=>speech.stop()},'Stop')),jH(PhotoShare,{label:'Share or download prayer',post:{title:p.name,text:p.text,background:xAsset('life-photos-2'),credit:p.source?'Hour of Mercy · traditional short prayer':'Traditional prayer',filename:'prayer-'+chosen.toLowerCase().replace(/[^a-z0-9]+/g,'-')+'.png'}}))));};
+
+const octOwnerFeedback=Feedback; Feedback=function(props){return jH(import_react.Fragment,null,jH(octOwnerFeedback,props),props.kind==="issue"&&props.canEdit&&jH(OctOwnerInbox));};
+function OctOwnerInbox(){const [items,setItems]=import_react.useState([]),[error,setError]=import_react.useState("");async function load(){try{const r=await fetch("/api/feedback?kind=issue");const d=await r.json();if(!r.ok)throw Error(d.error);setItems(d.items);setError("")}catch(e){setError(e.message)}}import_react.useEffect(()=>{load()},[]);return jH("section",{className:"j-section"},jH("h2",null,"Private owner inbox"),jH("button",{onClick:load},"Refresh reports"),error&&jH("p",{role:"alert"},error),items.map(x=>jH("article",{className:"j-card",key:x.id},jH("h3",null,x.name),jH("p",null,new Date(x.created).toLocaleString("en-NZ")),jH("p",null,x.message))));}
+
+const octFamilyNames=new Set(["NZ bucket lists"]);const octFaithNames=new Set(["Ideas from real lives","Speaking & leadership"]);const allNav=navGroups.flatMap(g=>g.items);navGroups.forEach(g=>g.items=g.items.filter(x=>!octFamilyNames.has(x.name)&&!octFaithNames.has(x.name)));navGroups[1].items.push(...allNav.filter(x=>octFamilyNames.has(x.name)));navGroups[2].items.push(...allNav.filter(x=>octFaithNames.has(x.name)));
+
+
+var octLayout=document.createElement("style");octLayout.id="october-final-layout";octLayout.textContent="/* Compact, readable sections across phones and desktops. */\n:root{--oct-ink:#17352e;--oct-accent:#2c6351}\n.section-content{max-width:1200px;margin:auto;padding:clamp(16px,3vw,38px)}\n.section-content h1{font-size:clamp(28px,4vw,44px);line-height:1.16;margin-bottom:16px}\n.section-content h2{line-height:1.28}.section-content p{line-height:1.65}\n.j-section>header{max-width:800px;margin-bottom:24px}.j-grid,.feeding-tips,.checklist-grid,.story-grid,.church-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:22px}\n.j-card,.feeding-tips>article,.church-grid>article{border:1px solid #dbe5dd;background:#fff;border-radius:20px;padding:22px;box-shadow:0 4px 20px #17352e06}\n.j-card>h2{font-size:23px}.j-card p{margin:14px 0}.j-card a{display:inline-block;margin:8px 10px 8px 0}.j-actions,.filters,.button-row{display:flex;gap:10px;flex-wrap:wrap}\n.filters{margin:20px 0}.filters button,.oct-country-grid button{border:1px solid #cbd9cf;border-radius:12px;padding:9px 13px;background:#fff;cursor:pointer}.filters button.selected,.oct-country-grid button.selected{background:#285a48;color:white;border-color:#285a48}\n.oct-weather{background:#f2f7f3;border:1px solid #d2e3d7;border-radius:20px;padding:22px;margin:20px 0}.oct-weather .metservice-weather{display:flex;flex-wrap:wrap;justify-content:space-between;gap:20px;max-width:750px}.metservice-weather iframe{width:300px!important;max-width:100%;height:235px!important;flex:none}.oct-weather p{margin:12px 0}\n.produce-panel{background:#f7f3e7;border-radius:20px;padding:24px!important;margin:24px 0}.produce-columns{display:grid;grid-template-columns:1fr 1fr;gap:20px}.produce-columns>div{background:white;border-radius:14px;padding:20px}.word-chips{display:flex;flex-wrap:wrap;gap:8px}.word-chips span{display:inline-block;border-radius:999px;background:#e4efdf;padding:7px 12px}\n.reading-feature{display:grid;grid-template-columns:minmax(220px,1fr) 1fr;gap:24px;padding:24px;border-radius:24px;background:#f5f0e7}.reading-feature img{width:100%;height:280px;object-fit:cover;border-radius:16px}.reading-feature h2{font-size:32px}.story-grid img{width:100%;height:180px;object-fit:cover}.story-grid h3{font-size:21px}.story-book-reader{max-width:960px;margin:auto}.story-audio{padding:18px;border-radius:16px}.book-spread{max-width:100%;overflow:hidden}.book-spread img{max-height:440px;object-fit:contain}.reading-search{display:block;margin:24px 0}\n.focus-panel,.mindfulness-panel,.mindfulness-exercises{max-width:980px;margin:auto}.mindfulness-scene{max-height:320px;overflow:hidden;border-radius:18px}.mindfulness-scene video,.mindfulness-scene img{width:100%;height:300px;object-fit:cover}.exercise-tabs{display:flex;flex-wrap:wrap;gap:8px}.timer-display{font-size:clamp(44px,8vw,76px)}\n.oct-country-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));max-height:330px;overflow:auto;gap:8px;margin:18px 0 28px;padding:12px;border-radius:18px;background:#eff4ef;border:1px solid #dbe5dd}.language-panel{padding:24px;background:white;border-radius:20px}.language-panel>a{display:inline-block;margin:18px 18px 0 0}.x-culture{display:grid;grid-template-columns:1fr 1.3fr;gap:22px;margin:24px 0}.x-culture-picture{width:100%;max-height:340px;object-fit:contain}.language-rows>div{padding:12px 0;border-bottom:1px solid #e1e8e1}\n.oct-church-map{display:grid;grid-template-columns:1fr 1fr;gap:28px;background:#f3f7f5;border-radius:24px;padding:24px;margin-bottom:28px}.oct-church-map svg{width:100%;max-height:430px}.oct-church-map svg [role=button]{cursor:pointer}.oct-church-map svg [role=button]:focus{outline:2px solid #b35b32}.cathedral-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,290px),1fr));gap:22px}.cathedral-grid img{height:190px;width:100%;object-fit:cover}\n.saint-browser{max-width:920px;margin:auto;background:#fff;padding:24px;border-radius:22px;border:1px solid #e3e7df}.saint-image{max-height:280px;object-fit:contain}.date-actions{display:flex;flex-wrap:wrap;gap:10px}.saint-calendar{max-width:440px}.rosary-panel{max-width:1000px;margin:auto;padding:24px;border-radius:24px;background:#faf6ee}.rosary-panel img{max-height:340px;width:100%;object-fit:contain}.rosary-controls{display:flex;flex-wrap:wrap;gap:12px}.rosary-steps li{padding:14px 16px;margin:10px 0;border-radius:12px;background:#fff}.common-prayers{margin-top:28px}.page-footer{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:44px;padding-top:20px;border-top:1px solid #d5dfd5;font-size:14px}\ninput[type=search],select,textarea{max-width:100%;border:1px solid #cbd9cf;background:#fff;border-radius:12px;padding:10px 12px}button:focus-visible,a:focus-visible{outline:3px solid #c68642;outline-offset:3px}\n@media(max-width:700px){.reading-feature,.oct-church-map,.x-culture,.produce-columns{grid-template-columns:1fr}.reading-feature img{height:210px}.j-card{padding:18px}.oct-country-grid{grid-template-columns:repeat(2,minmax(0,1fr));max-height:280px}.section-content{padding:16px}.page-footer{justify-content:center;text-align:center}.oct-church-map{padding:16px}.reading-feature h2{font-size:27px}}\n\n.family-motion-stage{max-width:660px;margin:auto}.family-outfit-figure{max-width:720px;margin:auto}.focus-grid{gap:20px}.x-guide-details{margin:24px 0;padding:20px;border:1px solid #dbe5dd;border-radius:18px}.x-guide-details>summary{cursor:pointer;font-weight:700;font-size:21px}.x-guide-details .j-grid{margin-top:20px}\n";document.head.appendChild(octLayout);
+
+const octBucket=NZBucket;
+NZBucket=function(){const [data,setData]=xStored('james-nz-bucket-v1',{cities:{},extra:[]}),[city,setCity]=import_react.useState('Auckland'),[choice,setChoice]=import_react.useState('Go to|Visit a local museum');const choices=['Go to|Visit a local museum','Go to|Explore a public garden','Go to|Spend an afternoon at a local library','Food to try|Try locally baked bread','Food to try|Choose seasonal fruit at a market','Food to try|Try a dish from a cuisine new to your family','Must experience|Attend a community event','Must experience|Watch a sunrise from an accessible viewpoint','Must experience|Visit a local cultural or heritage centre'];return jH(import_react.Fragment,null,jH('section',{className:'j-card'},jH('h2',null,'Choose a starter idea'),jH('p',null,'Add an idea to a destination, then customise it below. Check local availability and access.'),jH('label',null,'Destination',jH('select',{value:city,onChange:e=>setCity(e.target.value)},[...xCityNames,...data.extra].map(n=>jH('option',{key:n},n)))),jH('label',null,'Idea',jH('select',{value:choice,onChange:e=>setChoice(e.target.value)},choices.map(c=>jH('option',{key:c,value:c},c.replace('|',' · '))))),jH('button',{className:'primary',onClick:()=>{const [kind,text]=choice.split('|');let latest=data;try{latest=JSON.parse(localStorage.getItem('james-nz-bucket-v1'))||data}catch{}setData({...latest,cities:{...latest.cities,[city]:[...(latest.cities[city]||xCityDefault(city)),{kind,text,done:false}]}});}},'Add to '+city)),jH(octBucket,{key:JSON.stringify(data.cities)}));};
+
 //#region .sites-runtime/github-export/entry.tsx
-(0, import_client.createRoot)(document.getElementById("root")).render(/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Home, { canEdit: false }));
+(0, import_client.createRoot)(document.getElementById("root")).render(/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Home, { canEdit: new URLSearchParams(location.search).get("editor")==="1" }));
 //#endregion
